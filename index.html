@@ -9,9 +9,8 @@
   input, textarea, button { width: 100%; padding: 8px; margin-top: 5px; }
   #contactsList { max-height: 200px; overflow-y: auto; border: 1px solid #ccc; margin-top: 10px; padding: 5px; }
   #contactsList div { padding: 3px; border-bottom: 1px solid #eee; }
-  .success { color: green; }
-  .error { color: red; }
-  #status { margin-top: 20px; white-space: pre-wrap; }
+  #status { margin-top: 20px; white-space: pre-wrap; height: 250px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background: #f9f9f9; }
+  button:disabled { background-color: #ccc; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -32,6 +31,7 @@
 <h2>Lista de Contactos</h2>
 <div id="contactsList">Nenhum contacto importado.</div>
 
+<h2>Status do Envio</h2>
 <div id="status"></div>
 
 <!-- Biblioteca SheetJS para ler Excel -->
@@ -42,6 +42,7 @@
 const fileInput = document.getElementById('fileInput');
 const contactsListDiv = document.getElementById('contactsList');
 const statusDiv = document.getElementById('status');
+const sendButton = document.getElementById('sendAllBtn');
 let contacts = [];
 
 function isExcelFile(filename) {
@@ -52,7 +53,6 @@ function isCSVFile(filename) {
   return filename.endsWith('.csv');
 }
 
-// Parse CSV simples
 function parseCSV(text) {
   const lines = text.trim().split('\n');
   const contacts = [];
@@ -65,7 +65,6 @@ function parseCSV(text) {
   return contacts;
 }
 
-// Nova função para ler Excel, com alertas e deteção de colunas
 function parseExcel(data) {
   const workbook = XLSX.read(data, {type: 'binary'});
   const firstSheetName = workbook.SheetNames[0];
@@ -105,18 +104,14 @@ fileInput.addEventListener('change', (e) => {
     const data = event.target.result;
     if (isCSVFile(file.name.toLowerCase())) {
       contacts = parseCSV(data);
-      if (contacts.length === 0) {
-        alert('Nenhum contacto encontrado no CSV.');
-      }
+      if (contacts.length === 0) alert('Nenhum contacto encontrado no CSV.');
       displayContacts();
       console.log('Contacts from CSV:', contacts);
     } else if (isExcelFile(file.name.toLowerCase())) {
       try {
         const contactsExcel = parseExcel(data);
         contacts = contactsExcel;
-        if (contacts.length === 0) {
-          alert('Nenhum contacto encontrado no Excel. Confirme as colunas.');
-        }
+        if (contacts.length === 0) alert('Nenhum contacto encontrado no Excel. Confirme as colunas.');
         displayContacts();
         console.log('Contacts from Excel:', contacts);
       } catch (err) {
@@ -148,7 +143,7 @@ function displayContacts() {
   }
 }
 
-document.getElementById('sendAllBtn').addEventListener('click', async () => {
+sendButton.addEventListener('click', async () => {
   const url = document.getElementById('gatewayUrl').value.trim();
   const messageTemplate = document.getElementById('message').value.trim();
 
@@ -165,7 +160,9 @@ document.getElementById('sendAllBtn').addEventListener('click', async () => {
     return;
   }
 
+  sendButton.disabled = true;
   statusDiv.textContent = `Começando envio para ${contacts.length} contactos...\n`;
+  let sentCount = 0;
 
   async function sendSms(contact) {
     let personalizedMessage = messageTemplate.replace(/{nome}/gi, contact.name || contact.phone);
@@ -177,14 +174,19 @@ document.getElementById('sendAllBtn').addEventListener('click', async () => {
         body: JSON.stringify({ phone: contact.phone, message: personalizedMessage })
       });
       if(res.ok) {
+        sentCount++;
         statusDiv.textContent += `✔️ SMS enviado para ${contact.phone} (${contact.name || 'Sem nome'})\n`;
+        statusDiv.textContent += `Progresso: ${sentCount} / ${contacts.length}\n\n`;
+        statusDiv.scrollTop = statusDiv.scrollHeight;
         return true;
       } else {
         statusDiv.textContent += `❌ Erro ${res.status} ao enviar para ${contact.phone}\n`;
+        statusDiv.scrollTop = statusDiv.scrollHeight;
         return false;
       }
     } catch(err) {
       statusDiv.textContent += `❌ Erro ao enviar para ${contact.phone}: ${err.message}\n`;
+      statusDiv.scrollTop = statusDiv.scrollHeight;
       return false;
     }
   }
@@ -193,7 +195,8 @@ document.getElementById('sendAllBtn').addEventListener('click', async () => {
     await sendSms(contact);
   }
 
-  statusDiv.textContent += `\nEnvio concluído!`;
+  statusDiv.textContent += `\nEnvio concluído! Foram enviados ${sentCount} de ${contacts.length} SMS.`;
+  sendButton.disabled = false;
 });
 </script>
 
