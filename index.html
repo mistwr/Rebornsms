@@ -65,24 +65,33 @@ function parseCSV(text) {
   return contacts;
 }
 
-// Parse Excel usando SheetJS
+// Nova função para ler Excel, com alertas e deteção de colunas
 function parseExcel(data) {
   const workbook = XLSX.read(data, {type: 'binary'});
   const firstSheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[firstSheetName];
-  const json = XLSX.utils.sheet_to_json(worksheet, {defval:""});
-  // Esperamos que a sheet tenha colunas "telefone" e "nome" ou similar
+  const sheetData = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval:""});
+
+  const headers = sheetData[0].map(h => h.toString().toLowerCase());
+
+  const phoneIdx = headers.findIndex(h => ['telefone', 'phone', 'número', 'numero', 'celular'].includes(h));
+  const nameIdx = headers.findIndex(h => ['nome', 'name'].includes(h));
+
+  if(phoneIdx === -1) {
+    alert('Coluna de telefone não encontrada no Excel. Certifique-se que tem uma coluna chamada "telefone", "phone", "número", etc.');
+    return [];
+  }
+
   const contacts = [];
-  json.forEach(row => {
-    // Tentar pegar telefone e nome, adaptável
-    let phone = row.telefone || row.phone || row.Telefone || row.Phone || row['Número'] || '';
-    let name = row.nome || row.name || row.Nome || row.Name || '';
-    phone = phone.toString().trim();
-    name = name.toString().trim();
+  for(let i=1; i < sheetData.length; i++) {
+    const row = sheetData[i];
+    if(!row) continue;
+    const phone = row[phoneIdx] ? row[phoneIdx].toString().trim() : '';
+    const name = (nameIdx !== -1 && row[nameIdx]) ? row[nameIdx].toString().trim() : '';
     if(phone) {
       contacts.push({ phone, name });
     }
-  });
+  }
   return contacts;
 }
 
@@ -96,15 +105,23 @@ fileInput.addEventListener('change', (e) => {
     const data = event.target.result;
     if (isCSVFile(file.name.toLowerCase())) {
       contacts = parseCSV(data);
+      if (contacts.length === 0) {
+        alert('Nenhum contacto encontrado no CSV.');
+      }
       displayContacts();
+      console.log('Contacts from CSV:', contacts);
     } else if (isExcelFile(file.name.toLowerCase())) {
-      // Excel é binário, ler como binary string
       try {
         const contactsExcel = parseExcel(data);
         contacts = contactsExcel;
+        if (contacts.length === 0) {
+          alert('Nenhum contacto encontrado no Excel. Confirme as colunas.');
+        }
         displayContacts();
+        console.log('Contacts from Excel:', contacts);
       } catch (err) {
         alert('Erro ao ler ficheiro Excel: ' + err.message);
+        console.error(err);
       }
     } else {
       alert('Formato de ficheiro não suportado.');
@@ -151,7 +168,6 @@ document.getElementById('sendAllBtn').addEventListener('click', async () => {
   statusDiv.textContent = `Começando envio para ${contacts.length} contactos...\n`;
 
   async function sendSms(contact) {
-    // Substituir {nome} pela propriedade name (ou telefone se vazio)
     let personalizedMessage = messageTemplate.replace(/{nome}/gi, contact.name || contact.phone);
 
     try {
