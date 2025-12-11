@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8" />
+<title>Envio Massivo de SMS - Gateway</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; }
+  label { display: block; margin-top: 15px; }
+  input, textarea, button { width: 100%; padding: 8px; margin-top: 5px; }
+  #contactsList { max-height: 200px; overflow-y: auto; border: 1px solid #ccc; margin-top: 10px; padding: 5px; }
+  #contactsList div { padding: 3px; border-bottom: 1px solid #eee; }
+  .success { color: green; }
+  .error { color: red; }
+  #status { margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<h1>Envio Massivo de SMS via Gateway</h1>
+
+<label for="gatewayUrl">URL do Gateway (ex: http://192.168.1.242:8080/send-G-sms)</label>
+<input type="text" id="gatewayUrl" placeholder="Coloque o URL completo do endpoint" required />
+
+<label for="csvFile">Importar contactos CSV (coluna: telefone, opcional nome)</label>
+<input type="file" id="csvFile" accept=".csv" />
+
+<label for="message">Mensagem a enviar</label>
+<textarea id="message" rows="4" placeholder="Digite a mensagem" required></textarea>
+
+<button id="sendAllBtn">Enviar SMS para Todos</button>
+
+<h2>Lista de Contactos</h2>
+<div id="contactsList">Nenhum contacto importado.</div>
+
+<div id="status"></div>
+
+<script>
+// Função para ler CSV e extrair contactos
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const contacts = [];
+  for(let line of lines) {
+    const parts = line.split(',');
+    if(parts[0]) {
+      contacts.push({ phone: parts[0].trim(), name: parts[1] ? parts[1].trim() : '' });
+    }
+  }
+  return contacts;
+}
+
+const csvInput = document.getElementById('csvFile');
+const contactsListDiv = document.getElementById('contactsList');
+const statusDiv = document.getElementById('status');
+let contacts = [];
+
+csvInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    contacts = parseCSV(event.target.result);
+    if(contacts.length === 0) {
+      contactsListDiv.textContent = 'Nenhum contacto encontrado no ficheiro.';
+    } else {
+      contactsListDiv.innerHTML = '';
+      contacts.forEach(c => {
+        contactsListDiv.innerHTML += `<div>${c.name ? c.name + ' - ' : ''}${c.phone}</div>`;
+      });
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('sendAllBtn').addEventListener('click', async () => {
+  const url = document.getElementById('gatewayUrl').value.trim();
+  const message = document.getElementById('message').value.trim();
+
+  if(!url) {
+    alert('Coloque a URL do Gateway!');
+    return;
+  }
+  if(!message) {
+    alert('Digite a mensagem a enviar!');
+    return;
+  }
+  if(contacts.length === 0) {
+    alert('Importe a lista de contactos antes de enviar!');
+    return;
+  }
+
+  statusDiv.innerHTML = `Começando envio para ${contacts.length} contactos...<br/>`;
+
+  // Função para enviar SMS a um contacto
+  async function sendSms(contact) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: contact.phone, message })
+      });
+      if(res.ok) {
+        statusDiv.innerHTML += `<div class="success">SMS enviado para ${contact.phone} (${contact.name})</div>`;
+        return true;
+      } else {
+        statusDiv.innerHTML += `<div class="error">Erro ${res.status} ao enviar para ${contact.phone}</div>`;
+        return false;
+      }
+    } catch(err) {
+      statusDiv.innerHTML += `<div class="error">Erro ao enviar para ${contact.phone}: ${err.message}</div>`;
+      return false;
+    }
+  }
+
+  // Enviar SMS sequencialmente para evitar sobrecarga
+  for(const contact of contacts) {
+    await sendSms(contact);
+  }
+
+  statusDiv.innerHTML += `<br/>Envio concluído!`;
+});
+</script>
+
+</body>
+</html>
