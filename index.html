@@ -2,7 +2,7 @@
 <html lang="pt">
 <head>
 <meta charset="UTF-8" />
-<title>Envio Massivo de SMS - Gateway</title>
+<title>Envio Massivo de SMS com Excel/CSV</title>
 <style>
   body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; }
   label { display: block; margin-top: 15px; }
@@ -11,7 +11,7 @@
   #contactsList div { padding: 3px; border-bottom: 1px solid #eee; }
   .success { color: green; }
   .error { color: red; }
-  #status { margin-top: 20px; }
+  #status { margin-top: 20px; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -21,11 +21,11 @@
 <label for="gatewayUrl">URL do Gateway (ex: http://192.168.1.242:8080/send-G-sms)</label>
 <input type="text" id="gatewayUrl" placeholder="Coloque o URL completo do endpoint" required />
 
-<label for="csvFile">Importar contactos CSV (coluna: telefone, opcional nome)</label>
-<input type="file" id="csvFile" accept=".csv" />
+<label for="fileInput">Importar contactos CSV ou Excel (.xlsx)</label>
+<input type="file" id="fileInput" accept=".csv, .xlsx, .xls" />
 
-<label for="message">Mensagem a enviar</label>
-<textarea id="message" rows="4" placeholder="Digite a mensagem" required></textarea>
+<label for="message">Mensagem a enviar (use {nome} para personalizar)</label>
+<textarea id="message" rows="4" placeholder="Ex: Olá {nome}, esta é uma mensagem personalizada!" required></textarea>
 
 <button id="sendAllBtn">Enviar SMS para Todos</button>
 
@@ -34,8 +34,25 @@
 
 <div id="status"></div>
 
+<!-- Biblioteca SheetJS para ler Excel -->
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/shim.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
 <script>
-// Função para ler CSV e extrair contactos
+const fileInput = document.getElementById('fileInput');
+const contactsListDiv = document.getElementById('contactsList');
+const statusDiv = document.getElementById('status');
+let contacts = [];
+
+function isExcelFile(filename) {
+  return filename.endsWith('.xlsx') || filename.endsWith('.xls');
+}
+
+function isCSVFile(filename) {
+  return filename.endsWith('.csv');
+}
+
+// Parse CSV simples
 function parseCSV(text) {
   const lines = text.trim().split('\n');
   const contacts = [];
@@ -48,39 +65,81 @@ function parseCSV(text) {
   return contacts;
 }
 
-const csvInput = document.getElementById('csvFile');
-const contactsListDiv = document.getElementById('contactsList');
-const statusDiv = document.getElementById('status');
-let contacts = [];
+// Parse Excel usando SheetJS
+function parseExcel(data) {
+  const workbook = XLSX.read(data, {type: 'binary'});
+  const firstSheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[firstSheetName];
+  const json = XLSX.utils.sheet_to_json(worksheet, {defval:""});
+  // Esperamos que a sheet tenha colunas "telefone" e "nome" ou similar
+  const contacts = [];
+  json.forEach(row => {
+    // Tentar pegar telefone e nome, adaptável
+    let phone = row.telefone || row.phone || row.Telefone || row.Phone || row['Número'] || '';
+    let name = row.nome || row.name || row.Nome || row.Name || '';
+    phone = phone.toString().trim();
+    name = name.toString().trim();
+    if(phone) {
+      contacts.push({ phone, name });
+    }
+  });
+  return contacts;
+}
 
-csvInput.addEventListener('change', (e) => {
+fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if(!file) return;
 
   const reader = new FileReader();
+
   reader.onload = function(event) {
-    contacts = parseCSV(event.target.result);
-    if(contacts.length === 0) {
-      contactsListDiv.textContent = 'Nenhum contacto encontrado no ficheiro.';
+    const data = event.target.result;
+    if (isCSVFile(file.name.toLowerCase())) {
+      contacts = parseCSV(data);
+      displayContacts();
+    } else if (isExcelFile(file.name.toLowerCase())) {
+      // Excel é binário, ler como binary string
+      try {
+        const contactsExcel = parseExcel(data);
+        contacts = contactsExcel;
+        displayContacts();
+      } catch (err) {
+        alert('Erro ao ler ficheiro Excel: ' + err.message);
+      }
     } else {
-      contactsListDiv.innerHTML = '';
-      contacts.forEach(c => {
-        contactsListDiv.innerHTML += `<div>${c.name ? c.name + ' - ' : ''}${c.phone}</div>`;
-      });
+      alert('Formato de ficheiro não suportado.');
     }
   };
-  reader.readAsText(file);
+
+  if (isCSVFile(file.name.toLowerCase())) {
+    reader.readAsText(file);
+  } else if (isExcelFile(file.name.toLowerCase())) {
+    reader.readAsBinaryString(file);
+  } else {
+    alert('Formato de ficheiro não suportado.');
+  }
 });
+
+function displayContacts() {
+  if(contacts.length === 0) {
+    contactsListDiv.textContent = 'Nenhum contacto encontrado no ficheiro.';
+  } else {
+    contactsListDiv.innerHTML = '';
+    contacts.forEach(c => {
+      contactsListDiv.innerHTML += `<div>${c.name ? c.name + ' - ' : ''}${c.phone}</div>`;
+    });
+  }
+}
 
 document.getElementById('sendAllBtn').addEventListener('click', async () => {
   const url = document.getElementById('gatewayUrl').value.trim();
-  const message = document.getElementById('message').value.trim();
+  const messageTemplate = document.getElementById('message').value.trim();
 
   if(!url) {
     alert('Coloque a URL do Gateway!');
     return;
   }
-  if(!message) {
+  if(!messageTemplate) {
     alert('Digite a mensagem a enviar!');
     return;
   }
@@ -89,35 +148,36 @@ document.getElementById('sendAllBtn').addEventListener('click', async () => {
     return;
   }
 
-  statusDiv.innerHTML = `Começando envio para ${contacts.length} contactos...<br/>`;
+  statusDiv.textContent = `Começando envio para ${contacts.length} contactos...\n`;
 
-  // Função para enviar SMS a um contacto
   async function sendSms(contact) {
+    // Substituir {nome} pela propriedade name (ou telefone se vazio)
+    let personalizedMessage = messageTemplate.replace(/{nome}/gi, contact.name || contact.phone);
+
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: contact.phone, message })
+        body: JSON.stringify({ phone: contact.phone, message: personalizedMessage })
       });
       if(res.ok) {
-        statusDiv.innerHTML += `<div class="success">SMS enviado para ${contact.phone} (${contact.name})</div>`;
+        statusDiv.textContent += `✔️ SMS enviado para ${contact.phone} (${contact.name || 'Sem nome'})\n`;
         return true;
       } else {
-        statusDiv.innerHTML += `<div class="error">Erro ${res.status} ao enviar para ${contact.phone}</div>`;
+        statusDiv.textContent += `❌ Erro ${res.status} ao enviar para ${contact.phone}\n`;
         return false;
       }
     } catch(err) {
-      statusDiv.innerHTML += `<div class="error">Erro ao enviar para ${contact.phone}: ${err.message}</div>`;
+      statusDiv.textContent += `❌ Erro ao enviar para ${contact.phone}: ${err.message}\n`;
       return false;
     }
   }
 
-  // Enviar SMS sequencialmente para evitar sobrecarga
   for(const contact of contacts) {
     await sendSms(contact);
   }
 
-  statusDiv.innerHTML += `<br/>Envio concluído!`;
+  statusDiv.textContent += `\nEnvio concluído!`;
 });
 </script>
 
